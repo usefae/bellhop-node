@@ -8,8 +8,11 @@ You need an app on [bellhop.dev](https://bellhop.dev). That is where agents
 are licensed and where your secret key comes from.
 
 ```bash
-npm install @usefae/bellhop-node
+npm install @usefae/bellhop-node ws
 ```
+
+`ws` is only needed for the WebSocket transport. Express and Fastify are
+whatever your application already has.
 
 ## The whole thing
 

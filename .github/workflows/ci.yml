@@ -20,12 +20,17 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         node: [20, 22, 24]
+        peers: [v5]
         include:
           - os: windows-latest
             node: 22
+            peers: v5
           - os: macos-latest
             node: 22
-          # The peer ranges say >=4, so one leg runs the 4.x majors.
+            peers: v5
+          # The peer ranges say >=4, so one leg runs the 4.x majors. It needs
+          # its own value of `peers` to become a job of its own rather than a
+          # label on an existing one.
           - os: ubuntu-latest
             node: 22
             peers: v4

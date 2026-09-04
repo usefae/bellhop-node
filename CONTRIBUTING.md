@@ -11,6 +11,11 @@ npm run test:dist       # the built package, imported by name
 npm run check:package   # publint and arethetypeswrong
 ```
 
+`npm publish` runs everything above except `check:package`, which CI runs
+on every push. Run it by hand before a release; it cannot run inside
+`npm publish --dry-run`, because the dry-run flag leaks into the `npm pack`
+it performs itself.
+
 `npm run test:coverage` writes a report to `coverage/`.
 
 The protocol documents in the Bellhop repository (PROTOCOL.md,

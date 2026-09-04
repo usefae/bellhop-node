@@ -116,7 +116,7 @@
     "test:coverage": "vitest run --coverage",
     "test:dist": "node --test test-dist/smoke.test.mjs",
     "check:package": "publint && attw --pack . --profile node16",
-    "prepublishOnly": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build && npm run test:dist && npm run check:package"
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build && npm run test:dist"
   },
   "peerDependencies": {
     "express": ">=4",
