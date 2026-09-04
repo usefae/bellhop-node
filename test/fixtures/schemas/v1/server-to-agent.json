@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bellhop.dev/schemas/v1/server-to-agent.json",
+  "title": "Bellhop server-to-agent message, protocol version 1",
+  "description": "Every message a server may send. Implementations MUST ignore message types and object fields they do not recognise, so validation should be advisory rather than enforced on the receiving side.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["ready", "print", "config", "credential", "ping", "pong", "close"]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/ready" },
+    { "$ref": "#/$defs/print" },
+    { "$ref": "#/$defs/config" },
+    { "$ref": "#/$defs/credential" },
+    { "$ref": "#/$defs/ping" },
+    { "$ref": "#/$defs/pong" },
+    { "$ref": "#/$defs/close" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "accentColor": {
+      "type": ["string", "null"],
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+
+    "printOptions": {
+      "title": "print options",
+      "description": "How to print the job (PROTOCOL.md §5.2.3). Every option is optional; an absent option means whatever the target printer does by default. Note additionalProperties: false, which is deliberate and unique in this protocol. Everywhere else an unrecognised field MUST be ignored; here that would mean printing something other than what was asked for and acking success, so the set is closed and an agent MUST fail a job carrying anything else. Two rules this schema cannot express and the agent MUST enforce: which options apply to which format, and whether the target printer can honor a value.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "copies": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Applies to every format. For zpl and raw the agent delivers the byte stream this many times rather than asking CUPS or the printer to duplicate it. The ceiling is a blast radius rather than a technical limit: copies is the one option whose bug is spent physical stock."
+        },
+        "duplex": {
+          "type": "string",
+          "enum": ["one-sided", "long-edge", "short-edge"],
+          "description": "pdf only. long-edge and short-edge require capabilities.duplex true on the target; otherwise the job fails with unsupported_value."
+        },
+        "paper": {
+          "type": "string",
+          "description": "pdf and gif. MUST be one of the strings the agent reported in that printer's capabilities.papers. Matching is exact string equality: the agent never normalises or translates a media keyword, because a guess here comes out of the machine as a label on the wrong stock."
+        },
+        "bin": {
+          "type": "string",
+          "description": "pdf and gif. MUST be one of the strings the agent reported in that printer's capabilities.bins."
+        },
+        "dpi": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "pdf and gif. MUST be one of the integers the agent reported in that printer's capabilities.dpi."
+        },
+        "color": {
+          "type": "boolean",
+          "description": "pdf and gif. true requires capabilities.color true on the target. Either value requires that the target reported the field at all: an absent capability is unknown, not permission."
+        },
+        "pages": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(-[1-9][0-9]*)?(,[1-9][0-9]*(-[1-9][0-9]*)?)*$",
+          "examples": ["1-4,7,9-12", "3"],
+          "description": "pdf only. One-based, no spaces. The pattern cannot express the remaining rules, which the agent MUST enforce with invalid_option: terms ascending, non-overlapping, and first no greater than last."
+        },
+        "rotate": {
+          "type": "integer",
+          "enum": [0, 90, 180, 270],
+          "description": "pdf and gif. Degrees clockwise, always, because a rotation whose direction is a matter of opinion is a label printed upside down half the time."
+        },
+        "fit": {
+          "type": "boolean",
+          "default": true,
+          "description": "pdf and gif. Scale the document to the media. Defaults to true, which is what agents already did before this option existed; false prints at natural size and clips."
+        },
+        "collate": {
+          "type": "boolean",
+          "description": "pdf only. With more than one copy, 1,2,3,1,2,3 rather than 1,1,2,2,3,3. Harmless and unobservable with one copy or one page, which is not an error."
+        },
+        "nup": {
+          "type": "integer",
+          "enum": [1, 2, 4, 6, 9, 16],
+          "description": "pdf only. Pages per sheet."
+        }
+      }
+    },
+
+    "ready": {
+      "title": "ready",
+      "description": "Response to hello, and the only message a server may send before it. Folds branding and the credential into the handshake so they are not separate messages on every reconnect.",
+      "type": "object",
+      "required": ["type", "protocol_version"],
+      "properties": {
+        "type": { "const": "ready" },
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "description": "MUST equal the agent's version if the server accepted the session; otherwise close with 4002 instead of sending ready."
+        },
+        "app_name": { "type": "string" },
+        "accent_color": { "$ref": "#/$defs/accentColor" },
+        "credential": {
+          "type": ["string", "null"],
+          "description": "The current licence credential. Servers SHOULD always include it: this is what makes renewal invisible."
+        },
+        "heartbeat_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 120,
+          "default": 20,
+          "description": "Requested agent keepalive interval. The agent clamps out-of-range values."
+        }
+      }
+    },
+
+    "print": {
+      "title": "print",
+      "description": "Print one document. Exactly one of url and data must be present; if both are, the agent uses data. A job that names no printer routes by format to a role in the agent's default_printers.",
+      "type": "object",
+      "required": ["type", "id", "kind", "format"],
+      "properties": {
+        "type": { "const": "print" },
+        "id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Opaque, unique per pairing, never reused. Echoed in ack and used by the agent to suppress duplicates. A rejected job counts as completed in that ledger, so a job corrected after a failed ack needs a new id."
+        },
+        "kind": {
+          "type": "string",
+          "description": "App-defined and opaque to the agent. Shown in the agent's recent activity list.",
+          "examples": ["label", "packing_slip", "nametag", "receipt"]
+        },
+        "format": {
+          "type": "string",
+          "enum": ["zpl", "raw", "pdf", "gif"],
+          "description": "zpl and raw are delivered to the queue untouched; pdf and gif are rendered. Decides routing when the job names no printer: zpl, raw and gif to the label role, pdf to the document role. MUST be covered by a print:<format> capability from the agent's hello.",
+          "examples": ["zpl", "raw", "pdf", "gif"]
+        },
+        "printer": {
+          "$ref": "#/$defs/identifier",
+          "description": "The id of a printer from the agent's most recent hello. Overrides format routing. A job naming a printer the agent has not shared MUST fail with error_code unknown_printer, and that failure deliberately does not distinguish an unshared printer from one that does not exist.",
+          "examples": ["Zebra_Technologies_ZTC_GX420d"]
+        },
+        "options": { "$ref": "#/$defs/printOptions" },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTPS URL (http permitted only for localhost). At most 3 redirects, 30s timeout, 50 MB ceiling. The agent sends no credentials, so the URL must carry its own authorisation."
+        },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Base64 of the document bytes, up to 50 MB decoded. Preferred for ZPL."
+        }
+      },
+      "anyOf": [
+        { "required": ["url"] },
+        { "required": ["data"] }
+      ]
+    },
+
+    "config": {
+      "title": "config",
+      "description": "Mid-session branding update. Everything in it also appears in ready, so a server that only sets branding at connect time never needs to send this.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "config" },
+        "app_name": { "type": "string" },
+        "accent_color": { "$ref": "#/$defs/accentColor" }
+      }
+    },
+
+    "credential": {
+      "title": "credential",
+      "description": "Mid-session licence update. The agent verifies it offline and adopts it only if it verifies; an invalid one is logged and discarded, leaving the previous credential in place.",
+      "type": "object",
+      "required": ["type", "credential"],
+      "properties": {
+        "type": { "const": "credential" },
+        "credential": { "type": "string" }
+      }
+    },
+
+    "ping": {
+      "title": "ping",
+      "description": "Keepalive. The agent MUST reply with pong echoing token.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ping" },
+        "token": { "type": "string" }
+      }
+    },
+
+    "pong": {
+      "title": "pong",
+      "description": "Response to an agent ping. Answering this is the one mandatory, easily forgotten server obligation.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "pong" },
+        "token": { "type": "string" }
+      }
+    },
+
+    "close": {
+      "title": "close",
+      "description": "Advisory sent immediately before the server closes the transport, for frameworks that cannot set a WebSocket close code, for the HTTP transport, which has no close frame, and for carrying retry_after_seconds, which no close frame has room for.",
+      "type": "object",
+      "required": ["type", "code"],
+      "properties": {
+        "type": { "const": "close" },
+        "code": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "Any code of PROTOCOL.md §7.1: 4001 unauthorized, 4002 unsupported_version, 4003 agent_deactivated (all terminal); 4004 superseded and 4005 try_other_transport are retryable; 1000, 1001, 1012 and anything else retry on backoff."
+        },
+        "reason": { "type": "string" },
+        "retry_after_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600,
+          "description": "Pacing hint for the reconnect that follows (PROTOCOL.md §7.3). Applies to the next attempt only; the agent randomises within [half, whole]. Meaningful only with retryable codes; ignored on terminal codes."
+        }
+      }
+    }
+  }
+}

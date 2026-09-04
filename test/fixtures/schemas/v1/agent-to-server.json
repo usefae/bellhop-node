@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bellhop.dev/schemas/v1/agent-to-server.json",
+  "title": "Bellhop agent-to-server message, protocol version 1",
+  "description": "Every message an agent may send. Implementations MUST ignore message types and object fields they do not recognise, so validation should be advisory rather than enforced on the receiving side.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["hello", "ack", "weight", "event", "ping", "pong"]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/ack" },
+    { "$ref": "#/$defs/weight" },
+    { "$ref": "#/$defs/event" },
+    { "$ref": "#/$defs/ping" },
+    { "$ref": "#/$defs/pong" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+
+    "printer": {
+      "title": "printer",
+      "description": "One printer the operator has shared with this pairing (PROTOCOL.md §4.1.1). The agent reports only shared printers, and the credential's max_printers entitlement caps how many may appear.",
+      "type": "object",
+      "required": ["id", "name", "capabilities"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Stable for as long as the queue exists on that machine, and opaque: a server MUST NOT parse it or assume the same physical printer carries the same id elsewhere. The CUPS queue name on macOS and Linux.",
+          "examples": ["Zebra_Technologies_ZTC_GX420d"]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human display name, for admin screens. Never used for targeting: display names are not unique, not stable, and sometimes localised.",
+          "examples": ["Zebra GX420d"]
+        },
+        "capabilities": { "$ref": "#/$defs/printerCapabilities" }
+      }
+    },
+
+    "printerCapabilities": {
+      "title": "printer capabilities",
+      "description": "What this printer can be asked to do. Every field exists to answer exactly one print option, which is the whole rule for what belongs here. A field is present when the agent determined it and absent when it could not: absent means unknown, not unsupported and not empty, and an option whose capability is absent MUST fail with unsupported_value rather than being guessed at. Some queues report nothing at all (a printer shared from another machine, some driverless queues) and are reported as {}.",
+      "type": "object",
+      "properties": {
+        "papers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Media keywords exactly as the driver reports them, un-normalised. Answers options.paper.",
+          "examples": [["w288h360", "w288h432"], ["Letter", "Legal", "A4"]]
+        },
+        "default_paper": {
+          "type": "string",
+          "description": "Which of papers the queue uses when a job does not say."
+        },
+        "bins": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Input tray keywords exactly as the driver reports them. Answers options.bin.",
+          "examples": [["Auto", "Tray1", "Tray2"]]
+        },
+        "default_bin": { "type": "string" },
+        "dpi": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "Resolutions in dots per inch. Answers options.dpi.",
+          "examples": [[203, 300, 600]]
+        },
+        "default_dpi": { "type": "integer", "minimum": 1 },
+        "duplex": {
+          "type": "boolean",
+          "description": "Whether the printer can print both sides of a sheet. Answers options.duplex."
+        },
+        "color": {
+          "type": "boolean",
+          "description": "Whether the printer has colour. Answers options.color."
+        }
+      }
+    },
+
+    "hello": {
+      "title": "hello",
+      "description": "First message of every session. Also re-sent whenever the agent's advertised state changes (a different set of shared printers, a different default, the scale shared or unshared, a credential that changes entitlements); a later hello completely replaces the earlier one.",
+      "type": "object",
+      "required": ["type", "protocol_version", "agent_version", "platform", "session_id", "capabilities", "printers"],
+      "properties": {
+        "type": { "const": "hello" },
+        "protocol_version": {
+          "type": "integer",
+          "const": 1,
+          "description": "The version this agent speaks. A server that cannot speak it closes with 4002."
+        },
+        "agent_version": {
+          "type": "string",
+          "description": "Build version of the agent. Informational."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["macos", "windows", "linux"]
+        },
+        "session_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Fresh per session. Distinguishes a reconnect from a duplicate connection."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "examples": ["print:zpl", "print:raw", "print:pdf", "print:gif", "scale"]
+          },
+          "description": "Authoritative statement of what the server may ask for. A server MUST NOT send a print whose format has no matching print:<format> capability. An agent with no shared printer MUST NOT advertise any print: capability at all."
+        },
+        "printers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/printer" },
+          "description": "The printers the operator has shared with this pairing, and nothing else. May be empty. This is the whole of what an application is entitled to learn about the hardware at someone's desk."
+        },
+        "default_printers": {
+          "type": "object",
+          "description": "Role name to printer id: where a print that names no printer goes. Roles in version 1 are label and document. Every value MUST be the id of a printer in the same hello. A role may be absent, and a job that would route to it fails with no_default_printer rather than landing somewhere arbitrary. A map rather than named fields because roles will grow, and because there is exactly one printer per role.",
+          "additionalProperties": { "$ref": "#/$defs/identifier" },
+          "examples": [{ "label": "Zebra_Technologies_ZTC_GX420d", "document": "Office_HP_LaserJet" }]
+        }
+      }
+    },
+
+    "ack": {
+      "title": "ack",
+      "description": "Response to any server-to-agent message carrying an id. Version 1 defines only print as such a message. Sent exactly once per print, whether it succeeded or failed.",
+      "type": "object",
+      "required": ["type", "id", "status"],
+      "properties": {
+        "type": { "const": "ack" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "status": {
+          "type": "string",
+          "enum": ["printed", "failed"],
+          "description": "printed means the document was handed to the operating system without error. It is not a promise that paper came out."
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Human-readable detail when status is failed. Required on every failure: this is the sentence a person reads."
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "description": "Machine-readable failure class, which an agent SHOULD set on every failure. It exists because failing loudly is worth nothing if the only way to tell one failure from another is to pattern-match English. The version 1 registry is in the examples below and in PROTOCOL.md §4.2; it is open, exactly like event.code, so a server MUST treat an unrecognised code as a plain failure with no further meaning. printer_error is the catch-all.",
+          "examples": [
+            "unknown_printer",
+            "no_default_printer",
+            "unsupported_format",
+            "unsupported_option",
+            "invalid_option",
+            "unsupported_value",
+            "document_unavailable",
+            "printer_error"
+          ]
+        }
+      }
+    },
+
+    "weight": {
+      "title": "weight",
+      "description": "A stable scale reading. Sent only when the agent advertised the scale capability. Already filtered and debounced by the agent.",
+      "type": "object",
+      "required": ["type", "grams", "stable"],
+      "properties": {
+        "type": { "const": "weight" },
+        "grams": { "type": "integer", "minimum": 0 },
+        "stable": { "type": "boolean", "const": true }
+      }
+    },
+
+    "event": {
+      "title": "event",
+      "description": "Informational agent state not tied to a print job. Servers may ignore all events. Unknown codes MUST be ignored, which is what lets the registry grow without a version bump.",
+      "type": "object",
+      "required": ["type", "code"],
+      "properties": {
+        "type": { "const": "event" },
+        "code": {
+          "type": "string",
+          "examples": ["scale_attached", "scale_detached"]
+        },
+        "message": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "ping": {
+      "title": "ping",
+      "description": "Keepalive. The agent sends one every heartbeat_seconds and treats two unanswered pings as a dead session.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ping" },
+        "token": { "type": "string" }
+      }
+    },
+
+    "pong": {
+      "title": "pong",
+      "description": "Response to a server ping. Echoes token verbatim when one was present.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "pong" },
+        "token": { "type": "string" }
+      }
+    }
+  }
+}
